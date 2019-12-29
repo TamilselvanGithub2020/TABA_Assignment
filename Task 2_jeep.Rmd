@@ -1,0 +1,132 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+```{r}
+library('udpipe')
+library(lattice)
+library(wordcloud)
+```
+
+## Loading required package: RColorBrewer
+```{r}
+
+library(RColorBrewer)
+library('sentimentr')
+library(dplyr)
+```
+
+```{r}
+# first read the data
+  reviews_df <- read.csv('D:\\ISB\\Term 2\\TABA\\sample\\Car-JEEP-COMPASS.csv',stringsAsFactors = FALSE)
+reviews_df<- reviews_df %>% filter(brand_Name=="jeep")
+
+english_model = udpipe_load_model("D:/ISB/Term 2/TABA/Session 4 Materials/lec 4 materials/lec 4 materials/english-ewt-ud-2.4-190531.udpipe")  # file_model only needed
+x <- udpipe_annotate(english_model, x = reviews_df$review,parser = "none",trace = FALSE) #%>% as.data.frame() %>% head()
+x <- as.data.frame(x)
+head(x)
+```
+
+#Method:1 lets check top noun words in corpus
+```{r}
+all_nouns = x %>% subset(., xpos %in% c("NNS") ) # subset all the proper noun in corpus
+top_nouns = txt_freq(all_nouns$lemma)  # txt_freq() calcs noun freqs in desc order
+head(top_nouns, 5) 
+```
+```{r}
+pal <- brewer.pal(8,"Dark2")
+wordcloud(top_nouns$key,top_nouns$freq,min.freq = 2,max.words = 50,colors=pal)
+```
+
+
+#Let’s see what we are getting while using noun phrases
+```{r}
+x$phrase_tag <- as_phrasemachine(x$upos, type = "upos")# recode upos to 1-letter tag for better regex pattern
+
+stats <- keywords_phrases(x = x$phrase_tag, term = tolower(x$token), 
+                          pattern = "(A|N)*N(P+D*(A|N)*N)*", 
+                          is_regex = TRUE, detailed = FALSE)
+
+stats <- subset(stats, ngram > 1 & freq >3)
+
+stats$key <- factor(stats$keyword, levels = rev(stats$keyword))
+
+barchart(key ~ freq, data = head(stats, 20), col = "cadetblue", 
+         main = "Keywords - simple noun phrases", xlab = "Frequency")
+```
+
+
+#METHOD 3 RAKE
+```{r}
+stats <- keywords_rake(x = x, term = "lemma", group = c("doc_id"), 
+                       relevant = x$upos %in% c("NOUN", "ADJ"))
+
+stats$key <- factor(stats$keyword, levels = rev(stats$keyword))
+
+barchart(key ~ rake, data = head(subset(stats, freq > 4), 20), col = "cadetblue", 
+         main = "Keywords identified by RAKE", 
+         xlab = "Rake")
+```
+
+#feature list
+```{r}
+# based on above exploratory analysis, I have selected few product features/attributes
+feature_list <- c('airbag', 'interiors','headlamps','exterior','headlamp','voice command', 'boot space', 'panoramic sunroof', 'infotainment system', 'price range','music system', 'front grill', 'price','voice command', 'touch screen','value for money')
+```
+
+#########— Part 2 —-####### Sentiment analysis
+
+```{r}
+df <- x[,1:4] # select doc_id, par_id, sentence_id, sentence
+df <- df[!duplicated(df),] # remove duplicate sentences Why? check dataframe x
+head(df)
+```
+
+
+```{r}
+#score each sentence with respective sentiment score.
+
+sentiment<-sentiment_by(df$sentence)
+```
+
+
+```{r}
+df$sent_sentiment <- sentiment$ave_sentiment
+```
+
+```{r}
+#filter sentences based on feature list
+df$feature<-NA
+
+# extracting sentiment of features
+df$sentence <- tolower(df$sentence) #to get maximum sentences
+
+for (feature in feature_list){
+  #print(i)
+  df$feature <- ifelse(grepl(feature,df$sentence),feature,df$feature)
+}
+
+head(df[!is.na(df$feature),])
+```
+
+```{r}
+#aggregate score for each feature.
+
+df %>% select(doc_id,sent_sentiment,feature)%>%group_by(feature)%>%summarise(mean_sentiment = mean(sent_sentiment))
+```
+
+```{r}
+df%>%filter(feature=="touch screen")%>%select(sentence,sent_sentiment)
+```
+
